@@ -1354,6 +1354,8 @@ struct DialogLayout {
 /// (it takes every pointer event: the dialog is modal).
 struct DialogItem {
     key: u64,
+    /// The UI thread of the surface: the answer is posted back to it.
+    ui: crate::window::UiThread,
     serial: u64,
     id: u32,
     sheet: bool,
@@ -1465,7 +1467,7 @@ impl DialogItem {
             return;
         }
         let (key, serial, id) = (self.key, self.serial, self.id);
-        crate::window::invoke(move || {
+        self.ui.invoke(move || {
             let Some(surface) = Surface::by_key(key) else {
                 return;
             };
@@ -1777,6 +1779,7 @@ fn show_dialog(surface: &Rc<Surface>, dialog: &Dialog) {
     let serial = next_serial();
     let item = Rc::new(DialogItem {
         key: surface.key(),
+        ui: surface.ui_thread(),
         serial,
         id: dialog.id,
         sheet,
