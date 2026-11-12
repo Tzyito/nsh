@@ -284,3 +284,36 @@ fn aligned_attachments_grow_the_line_above_and_below_its_cell_baseline() {
         );
     }
 }
+
+/// An attachment with a baseline of its own (`baselineSource`) stands on
+/// the row's by it: the Cells under it are below the baseline.
+#[test]
+fn an_attachment_stands_on_the_row_by_its_own_baseline() {
+    use nsh_core::{AttachmentAlignments, Point, Size};
+    let engine = CellTextEngine::default();
+    let mut text = AttributedText::default();
+    text.push("A", Default::default());
+    text.push_attachment(Size::new(Points(16.0), Points(48.0)), Default::default());
+    text.push_attachment(Size::new(Points(8.0), Points(16.0)), Default::default());
+    let mut alignments = AttachmentAlignments::default();
+    // Two Cells of it above the baseline, one below.
+    alignments.set_baseline(1, Some(Points(32.0)));
+    let prepared = engine.prepare_aligned(&text, &alignments);
+    let measured = engine.measure(&prepared, None);
+    assert_eq!(measured, Size::new(Points(32.0), Points(48.0)));
+    let layout = engine.layout(&prepared, measured);
+    assert_eq!(engine.lines(&layout)[0].ascender, Points(32.0));
+    assert_eq!(
+        engine.attachments(&layout),
+        vec![
+            Some(Point::new(Points(8.0), Points(0.0))),
+            Some(Point::new(Points(24.0), Points(16.0))),
+        ],
+    );
+    // A text's first baseline is the bottom of its first row's Cells.
+    let prepared = engine.prepare(&text);
+    assert_eq!(
+        engine.first_baseline(&prepared, Points(200.0)),
+        Some(Points(48.0))
+    );
+}

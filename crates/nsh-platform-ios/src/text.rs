@@ -707,8 +707,9 @@ impl CoreTextEngine {
                 Points(x as f32),
             )
         };
-        let top = a.ascent(font, align).0 as CGFloat;
-        let (up, down) = a.extent(font, align);
+        // By its own baseline where it has one (`baselineSource`).
+        let top = alignments.ascent(a, font).0 as CGFloat;
+        let (up, down) = alignments.extent(a, font);
         let (up, down) = (up.0 as CGFloat, down.0 as CGFloat);
         // A fixed `lineHeight`: CoreText centers a line's own extent in
         // it, so a placeholder reaching past the font on one side only
@@ -1225,6 +1226,16 @@ impl TextEngine for CoreTextEngine {
             )
         };
         Size::new(Points(size.width as f32), Points(size.height as f32))
+    }
+
+    fn first_baseline(&self, prepared: &Prepared, width: Points) -> Option<Points> {
+        // Typeset at the size it measures `width` wide, as the text is laid
+        // out: its first line's origin is its baseline, from the box's
+        // bottom.
+        let layout = self.layout(prepared, self.measure(prepared, Some(width)));
+        let layout = layout.downcast::<CoreTextLayout>()?;
+        let first = layout.lines.first()?;
+        Some(Points((layout.height - first.origin.y) as f32))
     }
 
     fn layout(&self, prepared: &Prepared, size: Size<Points>) -> TextLayout {

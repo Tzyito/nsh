@@ -169,6 +169,17 @@ text("Made with ")
 </Text>
 ```
 
+在基线上时，元素以自己的底边为基线，与图片一样。自带文字的视图（句子里的标签、胶囊）更适合让其中的文字与周围文字落在同一条线上：`baselineSource: "first"`（取自 CSS 的 `baseline-source`）让视图以其内部首行文字的基线对齐所在行的基线，与 CSS 摆放 `inline-flex` 盒子的方式一致，所在行会为视图在这条基线上方和下方的部分留出空间。Rust 中是 `.baseline_source(BaselineSource::First)`。
+
+```tsx
+<Text style={{ fontSize: 15, lineHeight: 24 }}>
+  今天加仓了{" "}
+  <View style={{ baselineSource: "first", flexDirection: "row", paddingHorizontal: 6, borderRadius: 4 }}>
+    <Text style={{ fontSize: 14 }}>NVDA</Text>
+  </View>
+</Text>
+```
+
 ## 文字样式
 
 | 属性 | 取值 | Rust |

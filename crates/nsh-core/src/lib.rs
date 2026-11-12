@@ -118,8 +118,8 @@ pub use crate::{
         PanActivation, PointerEvents, Ripple, ViewProps,
     },
     style::{
-        BorderStyle, Borders, Color, CornerRadii, DecorationStyle, EllipsizeMode, EnvVar,
-        FamilyName, FontFamily, FontVariant, GridTemplateValue, LineHeight, ObjectPosition,
+        BaselineSource, BorderStyle, Borders, Color, CornerRadii, DecorationStyle, EllipsizeMode,
+        EnvVar, FamilyName, FontFamily, FontVariant, GridTemplateValue, LineHeight, ObjectPosition,
         PaintStyle, PositionAxis, PropertyValue, Style, StyleDecl, StyleError, StyleKey,
         StylePatch, StyleValue, SvgPaint, TextAlign, TextDecoration, TextShadow, TextStyle,
         TextTransform, TransformOrigin, TransformProperty, VerticalAlign, ViewStyle, font_families,

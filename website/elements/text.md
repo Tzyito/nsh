@@ -148,7 +148,8 @@ text("By continuing you agree to the ")
 
 Any other element inside a text (a view, an image, even inside spans) is an inline attachment: it is laid out at its
 own size, sits on the baseline (or where its `verticalAlign` style puts it: `"text-top"`, `"text-bottom"`,
-`"middle"`, as in CSS; the line grows to hold it) and wraps with the words. It takes presses of its own.
+`"middle"`, as in CSS; the line grows to hold it; a view with `baselineSource: "first"` stands on the line by the
+baseline of the text in it) and wraps with the words. It takes presses of its own.
 
 ```rust tabs
 text("Made with ")

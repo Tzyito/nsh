@@ -109,6 +109,31 @@ impl VerticalAlign {
     }
 }
 
+/// `baselineSource`: which baseline an element inside a `<Text>` has for
+/// `verticalAlign: "baseline"`, after CSS's `baseline-source`. Unset, the
+/// element is placed as a replaced inline box is (an image): its bottom
+/// edge is its baseline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum BaselineSource {
+    /// `auto`: its bottom edge.
+    #[default]
+    Auto,
+    /// `first`: the baseline of the first line of text inside it, as an
+    /// `inline-flex` box's; its bottom edge when it holds no text.
+    First,
+}
+
+impl BaselineSource {
+    /// The value named by CSS keyword `name`.
+    pub fn parse(name: &str) -> Option<Self> {
+        Some(match name {
+            "auto" => Self::Auto,
+            "first" => Self::First,
+            _ => return None,
+        })
+    }
+}
+
 /// A font family name, interned: copying and comparing one is free, so
 /// resolved text styles stay `Copy` and cheap to hash.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -1043,6 +1068,8 @@ pub struct Style {
     /// `verticalAlign`: where the element sits in its line when it is
     /// inside a `<Text>`.
     pub vertical_align: VerticalAlign,
+    /// `baselineSource`: the baseline it has inside a `<Text>`.
+    pub baseline_source: BaselineSource,
     /// `direction`: right to left (`Some(true)`), left to right, or
     /// inherited (`None`).
     pub direction: Option<bool>,
@@ -1468,6 +1495,7 @@ impl Default for Style {
             animated: Vec::new(),
             z_index: 0,
             vertical_align: VerticalAlign::Baseline,
+            baseline_source: BaselineSource::Auto,
             direction: None,
             logical: Logical::default(),
             pending: Pending::default(),
@@ -1694,6 +1722,7 @@ style_keys! {
     UserSelect = "userSelect": View "\"auto\" | \"none\" | \"text\"" "CSS's `user-select`: whether a `<Text>` can be selected (`\"text\"`) or not (`\"none\"`); a view's reaches the texts in it; `\"auto\"` leaves it to the view around it, else to the platform.",
     PointerEvents = "pointerEvents": View "\"auto\" | \"none\" | \"box-none\" | \"box-only\"" "CSS's `pointer-events`: `\"none\"` takes no touches, for the view and the views in it unless one says `\"auto\"`; `\"box-none\"` takes none on the view itself, only on the views in it; `\"box-only\"` takes them on the view itself, never on the views in it.",
     VerticalAlign = "verticalAlign": View "\"baseline\" | \"text-top\" | \"text-bottom\" | \"middle\"" "Where a view or image inside a `<Text>` sits in its line (CSS `vertical-align`, `align-*`): its bottom on the baseline (the default), its top or bottom at the top or bottom of the text's font, or its middle half the font's x height above the baseline. The line grows to hold it.",
+    BaselineSource = "baselineSource": View "\"auto\" | \"first\"" "The baseline a view inside a `<Text>` has for `verticalAlign: \"baseline\"` (after CSS's `baseline-source`): its bottom edge (`\"auto\"`, the default, as an image's), or the baseline of the first line of text in it (`\"first\"`), so a chip's label sits on the line of the text around it.",
 }
 
 /// A style property value as read from JS.
@@ -1788,6 +1817,8 @@ pub enum PropertyValue {
     AlignItems(Option<AlignItems>),
     /// `verticalAlign`.
     VerticalAlign(VerticalAlign),
+    /// `baselineSource`.
+    BaselineSource(BaselineSource),
     /// Right to left (`Some(true)`), left to right, or unset (`direction`,
     /// `writingDirection`, `fontStyle`'s italic).
     OptBool(Option<bool>),
@@ -2871,6 +2902,10 @@ impl StyleKey {
                 None => VerticalAlign::Baseline,
                 Some(k) => VerticalAlign::parse(k).ok_or(StyleError::InvalidValue)?,
             }),
+            K::BaselineSource => PropertyValue::BaselineSource(match keyword(value)? {
+                None => BaselineSource::Auto,
+                Some(k) => BaselineSource::parse(k).ok_or(StyleError::InvalidValue)?,
+            }),
             K::Direction => PropertyValue::OptBool(match keyword(value)? {
                 None | Some("inherit") => None,
                 Some("ltr") => Some(false),
@@ -3614,6 +3649,7 @@ impl Style {
             (K::BorderLeftWidth, V::Points(w)) => self.set_border_width(&[3], *w),
             (K::ZIndex, V::Number(n)) => self.z_index = n.0 as i32,
             (K::VerticalAlign, V::VerticalAlign(v)) => self.vertical_align = *v,
+            (K::BaselineSource, V::BaselineSource(v)) => self.baseline_source = *v,
             (K::Direction, V::OptBool(v)) => self.direction = *v,
             (K::MarginStart, V::OptLpa(v)) => self.logical.margin[0] = *v,
             (K::MarginEnd, V::OptLpa(v)) => self.logical.margin[1] = *v,

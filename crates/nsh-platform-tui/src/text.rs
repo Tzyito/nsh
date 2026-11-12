@@ -133,7 +133,7 @@ fn glyphs(text: &AttributedText, cells: CellSize, alignments: &AttachmentAlignme
             );
             let attachment = attachment.map(|(index, a)| {
                 let font = FontExtent::new(cells.height(), Points::ZERO, cells.height() / 2.0);
-                let (ascent, descent) = a.extent(font, alignments.get(start));
+                let (ascent, descent) = alignments.extent(a, font);
                 Attachment {
                     index,
                     ascent: (ascent / cells.height()).ceil() as usize,
@@ -303,6 +303,14 @@ impl TextEngine for CellTextEngine {
                     })
                     .sum::<usize>() as f32,
         )
+    }
+
+    /// The bottom of the first row's own Cells: a Cell is its font's
+    /// ascent, with nothing below the baseline.
+    fn first_baseline(&self, text: &Self::Prepared, width: Points) -> Option<Points> {
+        let rows = self.rows(text, Some(width));
+        let (ascent, _) = row_extent(rows.first()?);
+        Some(self.cells.height() * ascent as f32)
     }
 
     fn layout(&self, text: &Self::Prepared, size: Size<Points>) -> TextLayout {

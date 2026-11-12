@@ -708,6 +708,12 @@ frame id:icon-bottom 7.7 4.8 4 12
 frame id:icon-middle 7.7 7.3 4 12
 frame id:icon-class 7.7 0 4 12
 covers [styles] verticalAlign
+# A chip 20 pt tall whose label's baseline is 14 pt below its top (2 of
+# padding, a 12 pt line): by its bottom edge it fills the line from its
+# top; by its own baseline that stands on the line's, 2.8 pt down.
+frame id:chip-edge 7.7 0 6 20
+frame id:chip-first 15.4 2.8 6 20
+covers [styles] baselineSource
 
 # paint-tailwind
 tap id:case-paint-tailwind

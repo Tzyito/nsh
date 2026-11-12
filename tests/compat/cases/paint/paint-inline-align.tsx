@@ -1,7 +1,8 @@
 // A case of the API's test suite (docs/dev/compatibility.md): where
 // `verticalAlign` (and its `align-*` classes) puts a view inside a text in
 // its line: on the baseline (the default), at the top or the bottom of the
-// text's font, or in its middle.
+// text's font, or in its middle; and `baselineSource`, by which a view
+// holding text stands on the line by that text's baseline.
 import { Text, View } from "nsh";
 
 function App() {
@@ -24,6 +25,15 @@ function App() {
       </Text>
       <Text testID="inline-class" style={{ alignSelf: "flex-start" }}>
         A<View testID="icon-class" class="align-text-top" style={{ width: 4, height: 12 }} />
+      </Text>
+      <Text testID="inline-chip" style={{ alignSelf: "flex-start" }}>
+        A
+        <View testID="chip-edge" style={{ paddingTop: 2, paddingBottom: 6 }}>
+          <Text style={{ fontSize: 10 }}>B</Text>
+        </View>
+        <View testID="chip-first" style={{ baselineSource: "first", paddingTop: 2, paddingBottom: 6 }}>
+          <Text style={{ fontSize: 10 }}>B</Text>
+        </View>
       </Text>
     </View>
   );

@@ -865,8 +865,9 @@ impl Prepared {
             let s = &self.spans[i];
             nsh_core::FontExtent::new(Points(s.ascent), Points(s.descent), Points(s.x))
         };
-        let (up, down) = a.extent(font, alignments.get(a.index));
-        (a.ascent(font, alignments.get(a.index)).0, up.0, down.0)
+        // By its own baseline where it has one (`baselineSource`).
+        let (up, down) = alignments.extent(a, font);
+        (alignments.ascent(a, font).0, up.0, down.0)
     }
 
     /// The width of clusters `start..end` without trailing whitespace.
@@ -1429,6 +1430,14 @@ impl TextEngine for GpuiTextEngine {
             width = width.min(max);
         }
         Size::new(Points(width.ceil()), Points(height.ceil()))
+    }
+
+    fn first_baseline(&self, p: &Prepared, width: Points) -> Option<Points> {
+        // Typeset at the size it measures `width` wide, as the text is laid
+        // out: its first line's baseline.
+        let layout = self.layout(p, self.measure(p, Some(width)));
+        let layout = layout.downcast::<GpuiLayout>()?;
+        Some(Points(layout.lines.first()?.baseline))
     }
 
     fn layout(&self, p: &Prepared, size: Size<Points>) -> TextLayout {
@@ -3479,9 +3488,10 @@ mod tests {
         let style = ResolvedTextStyle::default();
         // The first line's top of a 30 pt attachment after "Ax", and the
         // line's extent above and below its baseline.
-        let place = |align| {
+        let place_by = |align, baseline: Option<f32>| {
             let mut t = text(&[("Ax", style)]);
             let mut alignments = nsh_core::AttachmentAlignments::default();
+            alignments.set_baseline(t.len_utf16(), baseline.map(Points));
             alignments.push(
                 &mut t,
                 nsh_core::geometry::size(Points(10.0), Points(30.0)),
@@ -3495,6 +3505,7 @@ mod tests {
             let top = engine.attachments(&layout)[0].expect("shown").y.0;
             (top, line.ascender.0, line.descender.0)
         };
+        let place = |align| place_by(align, None);
         let near = |a: f32, b: f32| (a - b).abs() < 0.01;
         // Its bottom on the baseline.
         let (top, up, _) = place(nsh_core::VerticalAlign::Baseline);
@@ -3511,6 +3522,10 @@ mod tests {
         // Its middle above the baseline.
         let (top, up, _) = place(nsh_core::VerticalAlign::Middle);
         assert!(top + 15.0 < up, "{top} {up}");
+        // By a baseline of its own 22 below its top (`baselineSource`): that
+        // one stands on the line's, the 8 under it in the line's descent.
+        let (top, up, down) = place_by(nsh_core::VerticalAlign::Baseline, Some(22.0));
+        assert!(near(top + 22.0, up) && down > 7.99, "{top} {up} {down}");
     }
 
     #[test]

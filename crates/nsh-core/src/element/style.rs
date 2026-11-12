@@ -4106,6 +4106,18 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Inside a text, the baseline it stands on the line's by
+    /// (`baselineSource`): the first line of the text in it
+    /// ([`crate::BaselineSource::First`]), where it stands on its bottom
+    /// edge by default.
+    fn baseline_source(mut self, source: crate::BaselineSource) -> Self {
+        self.style().value(
+            StyleKey::BaselineSource,
+            PropertyValue::BaselineSource(source),
+        );
+        self
+    }
+
     /// Extra space between letters.
     fn letter_spacing(mut self, spacing: impl IntoReactive<AbsoluteLength>) -> Self {
         self.style()

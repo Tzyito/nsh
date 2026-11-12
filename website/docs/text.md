@@ -181,6 +181,22 @@ others of the same names.
 </Text>
 ```
 
+On the baseline, an element stands on its bottom edge, as an image does. A view that holds text of its own, a chip
+or a tag in a sentence, reads best with its label on the line of the words around it: `baselineSource: "first"`
+(after CSS's `baseline-source`) stands the view on the line by the baseline of the first line of text in it, as CSS
+places an `inline-flex` box, and the line reserves what the view has above and below that baseline. In Rust it is
+`.baseline_source(BaselineSource::First)`.
+
+```tsx
+<Text style={{ fontSize: 15, lineHeight: 24 }}>
+  Bought more{" "}
+  <View style={{ baselineSource: "first", flexDirection: "row", paddingHorizontal: 6, borderRadius: 4 }}>
+    <Text style={{ fontSize: 14 }}>NVDA</Text>
+  </View>{" "}
+  today
+</Text>
+```
+
 ## Text styles
 
 | Property | Values | Rust |

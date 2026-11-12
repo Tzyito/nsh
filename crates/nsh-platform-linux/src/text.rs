@@ -779,8 +779,9 @@ impl TextEngine for PangoTextEngine {
             } else {
                 self.attachment_font(context, text, a)
             };
-            let top = a.ascent(font, alignments.get(a.index));
-            let (up, down) = a.extent(font, alignments.get(a.index));
+            // By its own baseline where it has one (`baselineSource`).
+            let top = alignments.ascent(a, font);
+            let (up, down) = alignments.extent(a, font);
             let (mut up, mut down) = (to_pango(up.0), to_pango(down.0));
             // With a fixed `lineHeight`, at least the box the text's runs
             // take (their font with the line height spread evenly above and
@@ -878,6 +879,15 @@ impl TextEngine for PangoTextEngine {
 
     fn breaks_lines_greedily(&self) -> bool {
         true
+    }
+
+    fn first_baseline(&self, prepared: &Prepared, width: Points) -> Option<Points> {
+        // Typeset at the size it measures `width` wide, as the text is laid
+        // out: the baseline its first line's runs are drawn on.
+        let layout = self.layout(prepared, self.measure(prepared, Some(width)));
+        let layout = layout.downcast::<LinuxLayout>()?;
+        let first = layout.lines.first()?;
+        Some(Points(layout.runs.get(first.runs.start)?.baseline))
     }
 
     fn layout(&self, prepared: &Prepared, size: Size<Points>) -> TextLayout {
@@ -2435,6 +2445,26 @@ mod tests {
                     );
                 }
             }
+            // By a baseline of its own 22 below its top (`baselineSource`):
+            // that one stands on the line's.
+            let mut text = text(&[("Ax", style)]);
+            let mut alignments = nsh_core::AttachmentAlignments::default();
+            alignments.set_baseline(text.len_utf16(), Some(Points(22.0)));
+            alignments.push(
+                &mut text,
+                nsh_core::Size::new(Points(10.0), Points(30.0)),
+                nsh_core::VerticalAlign::Baseline,
+                style,
+            );
+            let prepared = engine.prepare_aligned(&text, &alignments);
+            let layout = engine.layout(&prepared, engine.measure(&prepared, None));
+            let line = engine.lines(&layout).remove(0);
+            let top = engine.attachments(&layout)[0].expect("shown").y;
+            let expected = line.y + line.ascender - Points(22.0);
+            assert!(
+                (top - expected).0.abs() < 0.01,
+                "own baseline: {top:?} {expected:?}"
+            );
         }
     }
 
