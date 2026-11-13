@@ -324,6 +324,8 @@ pub(crate) fn deliver(cx: *mut JsContext, event: JsEvent) -> Result<(), JsValue>
             prop,
             key,
             value,
+            function,
+            reactive,
         } => {
             let host_js = crate::classes::host_outside_calls(cx);
             let converted = catch_unwind(AssertUnwindSafe(|| {
@@ -347,8 +349,20 @@ pub(crate) fn deliver(cx: *mut JsContext, event: JsEvent) -> Result<(), JsValue>
                 }
             };
             let data = render_data(cx, prop, &key);
-            // SAFETY: the object takes the value.
-            unsafe { qjs::JS_SetPropertyStr(cx, data, c"value".as_ptr(), value) };
+            // SAFETY: the object takes the value, the function and the flag.
+            unsafe {
+                qjs::JS_SetPropertyStr(cx, data, c"value".as_ptr(), value);
+                if let Some(f) = function.and_then(|f| f.value(&host_js)) {
+                    let f = crate::classes::from_raw(f);
+                    qjs::JS_SetPropertyStr(cx, data, c"function".as_ptr(), f);
+                }
+                let reactive = if reactive {
+                    qjs::JS_TRUE
+                } else {
+                    qjs::JS_FALSE
+                };
+                qjs::JS_SetPropertyStr(cx, data, c"reactive".as_ptr(), reactive);
+            }
             component_event(cx, host, RENDER, data)
         }
         JsEvent::Unrender { host, prop, key } => {
@@ -844,9 +858,7 @@ fn render_component(
         .then(|| Owned(cx, reactive::new_signal(cx, qjs::JS_FALSE)));
     // Render functions: what they rendered, by (prop, key): `[holder,
     // root]`, the roots disposed with the component.
-    let renders = spec
-        .renderers()
-        .any(|r| has(cx, props, r))
+    let renders = (spec.keeps_renders || spec.renderers().any(|r| has(cx, props, r)))
         // SAFETY: a new object.
         .then(|| Owned(cx, unsafe { qjs::JS_NewObject(cx) }));
     if let Some(renders) = &renders {
@@ -1223,8 +1235,8 @@ unsafe extern "C" fn on_native_event(
 // --- Render functions ----------------------------------------------------------------
 
 /// A component's render functions: its props, what they rendered by
-/// (prop, key) (`[holder, root]`), its host and the owner it was rendered
-/// under (what is rendered sees its context).
+/// (prop, key) (`[holder, root, function, props' signal]`), its host and
+/// the owner it was rendered under (what is rendered sees its context).
 struct Renders {
     props: JsValue,
     renders: JsValue,
@@ -1233,9 +1245,12 @@ struct Renders {
 }
 
 impl Renders {
-    /// `{ prop, key, value }`: the app's function renders `value` into a
-    /// new holder for (prop, key), inserted into the host; the one it
-    /// replaces goes.
+    /// `{ prop, key, value, function?, reactive }`: the app's function (the
+    /// prop's, or `function`, which the component keeps) renders `value`
+    /// into a new holder for (prop, key), inserted into the host; the one
+    /// it replaces goes. A reactive render gets the value as props that
+    /// read a signal of it: a new value for the same function sets the
+    /// signal, and nothing is rendered again.
     fn render(&self, ctx: *mut JsContext, data: JsValue) -> Result<(), JsValue> {
         let (Some(prop), Some(key)) = (
             string_arg(ctx, Owned(ctx, get(ctx, data, "prop")).1),
@@ -1243,13 +1258,36 @@ impl Renders {
         ) else {
             return Ok(());
         };
-        let f = Owned(ctx, get(ctx, self.props, &prop));
+        let kept = Owned(ctx, get(ctx, data, "function"));
+        // SAFETY: live values.
+        let f = if unsafe { qjs::JS_IsFunction(ctx, kept.1) } {
+            kept
+        } else {
+            Owned(ctx, get(ctx, self.props, &prop))
+        };
         // SAFETY: a live value.
         if !unsafe { qjs::JS_IsFunction(ctx, f.1) } {
             return Ok(());
         }
         let value = Owned(ctx, get(ctx, data, "value"));
         let slot = format!("{prop}\u{1f}{key}");
+        let reactive = {
+            let flag = Owned(ctx, get(ctx, data, "reactive"));
+            // SAFETY: a live value.
+            unsafe { qjs::JS_ToBool(ctx, flag.1) == 1 }
+        };
+        if reactive && self.update_in_place(ctx, &slot, f.1, value.1) {
+            return Ok(());
+        }
+        // The props a reactive render reads, and their signal.
+        let (signal, arg) = if reactive {
+            let signal = Owned(ctx, reactive::new_signal(ctx, value.1));
+            let props = Owned(ctx, live_props(ctx, signal.1, value.1)?);
+            (Some(signal), props)
+        } else {
+            // SAFETY: a new reference of a live value.
+            (None, Owned(ctx, unsafe { qjs::JS_DupValue(ctx, value.1) }))
+        };
         let (root, made) = reactive::untracked_with(ctx, || {
             reactive::with_root_under(ctx, self.owner, || -> Result<Owned, JsValue> {
                 let holder = Owned(ctx, dom::create_element(ctx, nsh_core::Tag::View)?);
@@ -1257,7 +1295,7 @@ impl Renders {
                 dom::set_prop_value(ctx, holder.1, "componentRender", name.1)?;
                 let content = Owned(
                     ctx,
-                    crate::web::js::call(ctx, f.1, UNDEFINED, &[value.1])
+                    crate::web::js::call(ctx, f.1, UNDEFINED, &[arg.1])
                         .map(|v| v.take())
                         .map_err(|_| qjs::JS_EXCEPTION)?,
                 );
@@ -1275,9 +1313,11 @@ impl Renders {
         let node = Owned(ctx, dom::node_value(ctx, self.host));
         dom::insert_node(ctx, node.1, holder.1, None)?;
         let old = self.take(ctx, &slot);
-        let entry =
-            crate::web::js::new_array(ctx, vec![V::dup(ctx, holder.1), V::num(f64::from(root))])
-                .map_err(|_| qjs::JS_EXCEPTION)?;
+        let mut items = vec![V::dup(ctx, holder.1), V::num(f64::from(root))];
+        if let Some(signal) = &signal {
+            items.extend([V::dup(ctx, f.1), V::dup(ctx, signal.1)]);
+        }
+        let entry = crate::web::js::new_array(ctx, items).map_err(|_| qjs::JS_EXCEPTION)?;
         let key = CString::new(slot).unwrap_or_default();
         // SAFETY: the object takes a dup of the entry.
         unsafe {
@@ -1290,6 +1330,29 @@ impl Renders {
             }
             None => Ok(()),
         }
+    }
+
+    /// A reactive render of `f` placed for `slot` again with `value`
+    /// (borrowed): the props it was given read it now. False when `slot`
+    /// was not rendered so, or with another function.
+    fn update_in_place(&self, ctx: *mut JsContext, slot: &str, f: JsValue, value: JsValue) -> bool {
+        let entry = Owned(ctx, get(ctx, self.renders, slot));
+        // SAFETY: reads of a live value (an array `render` made).
+        unsafe {
+            if !qjs::JS_IsObject(entry.1) {
+                return false;
+            }
+            let kept = Owned(ctx, qjs::JS_GetPropertyUint32(ctx, entry.1, 2));
+            if !crate::web::js::same(kept.1, f) {
+                return false;
+            }
+            let signal = Owned(ctx, qjs::JS_GetPropertyUint32(ctx, entry.1, 3));
+            if !reactive::signal_kind(ctx, signal.1).0 {
+                return false;
+            }
+            reactive::set_signal(ctx, signal.1, qjs::JS_DupValue(ctx, value));
+        }
+        true
     }
 
     /// `{ prop, key }`: what was rendered for (prop, key) goes.
@@ -1329,6 +1392,46 @@ impl Renders {
             Some((holder, n as u32))
         }
     }
+}
+
+/// The props of a reactive render: a getter for each of `value`'s own
+/// fields (borrowed) that reads that field of `signal`'s value (borrowed),
+/// so what reads a prop follows the values the core places.
+fn live_props(ctx: *mut JsContext, signal: JsValue, value: JsValue) -> Result<JsValue, JsValue> {
+    let host = crate::classes::host_outside_calls(ctx);
+    let keys = JsIn::new(&host, crate::classes::to_raw(value))
+        .keys()
+        .unwrap_or_default();
+    // SAFETY: a new object.
+    let props = Owned(ctx, unsafe { qjs::JS_NewObject(ctx) });
+    for key in keys {
+        let name = key.clone();
+        let getter =
+            crate::web::js::closure(ctx, vec![V::dup(ctx, signal)], move |cx, captures, _| {
+                let current = crate::web::js::call(cx, captures[0].raw(), UNDEFINED, &[])?;
+                crate::web::js::get(cx, current.raw(), &name)
+            })
+            .map_err(|_| qjs::JS_EXCEPTION)?;
+        let field = CString::new(key).unwrap_or_default();
+        // SAFETY: the property takes the getter.
+        let r = unsafe {
+            let atom = qjs::JS_NewAtom(ctx, field.as_ptr());
+            let r = qjs::JS_DefinePropertyGetSet(
+                ctx,
+                props.1,
+                atom,
+                getter.take(),
+                UNDEFINED,
+                (qjs::JS_PROP_ENUMERABLE | qjs::JS_PROP_CONFIGURABLE) as c_int,
+            );
+            qjs::JS_FreeAtom(ctx, atom);
+            r
+        };
+        if r < 0 {
+            return Err(qjs::JS_EXCEPTION);
+        }
+    }
+    Ok(props.take())
 }
 
 /// The cleanup of a component with event handlers: its host's handled

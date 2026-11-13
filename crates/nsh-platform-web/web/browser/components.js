@@ -10,7 +10,7 @@ export function createComponents(invoke, values, reactive, dom) {
     const owner = reactive.getOwner();
     const state = { node, props, owner, renders: new Map(), lazy: reactive.signal(false) };
     states.set(node, state);
-    if (spec.events.length || spec.lazy || spec.props.some(p => p.kind === "renderer")) invoke(305, [node, "onNativeEvent", true]);
+    if (spec.events.length || spec.lazy || spec.renders || spec.props.some(p => p.kind === "renderer")) invoke(305, [node, "onNativeEvent", true]);
     const disposeRender = entry => { invoke(306, [node, entry.holder]); entry.dispose(); };
     reactive.cleanup(() => { for (const entries of state.renders.values()) for (const entry of entries.values()) disposeRender(entry); state.renders.clear(); });
     let anchor = null;
@@ -70,21 +70,32 @@ export function createComponents(invoke, values, reactive, dom) {
       }))));
     },
     children(id, wanted) { state(id)?.lazy.set(wanted); },
-    render(id, prop, key, value) {
+    // `kept`: the function the component keeps, else its prop's. A
+    // reactive render gets props reading a signal of the value: a new
+    // value for the same function sets it, and nothing renders again.
+    render(id, prop, key, value, kept, live) {
       const current = state(id);
       if (!current) return;
+      const render = typeof kept === "function" ? kept : current.props[prop];
+      const existing = current.renders.get(prop)?.get(key);
+      if (live && existing?.signal && existing.render === render) { existing.signal.set(value); return; }
       reactive.runWithOwner(current.owner, () => reactive.protect(() => {
         this.unrender(id, prop, key);
-        const render = current.props[prop];
         if (typeof render !== "function") return;
         return reactive.root(dispose => {
           const holder = dom.rt.element("view");
           dom.rt.prop(holder, "componentRender", `${prop}\x1f${key}`);
-          try { dom.rt.insert(holder, render(value)); dom.rt.append(current.node, holder); }
+          let signal = null, arg = value;
+          if (live) {
+            signal = reactive.signal(value);
+            arg = {};
+            for (const name of Object.keys(value)) Object.defineProperty(arg, name, { enumerable: true, get: () => signal()[name] });
+          }
+          try { dom.rt.insert(holder, reactive.untracked(() => render(arg))); dom.rt.append(current.node, holder); }
           catch (error) { dispose(); throw error; }
           let entries = current.renders.get(prop);
           if (!entries) current.renders.set(prop, entries = new Map());
-          entries.set(key, { holder, dispose });
+          entries.set(key, { holder, dispose, render, signal });
         });
       }));
     },

@@ -4435,6 +4435,18 @@ covers [nsh/base] createRichEditor
 covers [nsh/base] defineExtension
 covers [nsh/base] richExtension
 
+# base-rich-editor-node-views
+tap id:case-base-rich-editor-node-views
+expect NodeBlocks 2 function
+expect NodeTag tag ACME tag
+expect TagPill 1
+expect NodeCard c1 5 false
+tap text:TagPill 1
+expect TagPill 2
+tap text:CardRemove
+absent CardRemove
+covers [nsh/base] RichNodeView
+
 # base-rich-editor-view
 tap id:case-base-rich-editor-view
 expect BubbleMenu

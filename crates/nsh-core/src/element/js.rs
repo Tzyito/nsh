@@ -231,6 +231,15 @@ pub trait JsHost {
         let _ = (v, args);
         Err(PropError(format!("`{name}` cannot be called here")))
     }
+    /// Method `name` of object `v` (borrowed), bound to it: a function to
+    /// hand to JS on its own (`v[name].bind(v)`), owned. A host without
+    /// calls refuses.
+    fn bind_method(&self, v: JsRaw, name: &str) -> Result<JsRaw, PropError> {
+        let method = self.field(v, name)?;
+        let bound = self.invoke(method, "bind", &[v]);
+        self.free(method);
+        bound
+    }
     /// `v` as JSON (as `JSON.stringify` sees it).
     fn to_json(&self, v: JsRaw) -> Result<JsonValue, PropError>;
     /// A short text showing `v`, for errors (`"abc"`, `{}`).

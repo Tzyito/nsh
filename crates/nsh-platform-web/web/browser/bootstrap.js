@@ -3732,7 +3732,7 @@
 				lazy: reactive.signal(false)
 			};
 			states.set(node, state);
-			if (spec.events.length || spec.lazy || spec.props.some((p) => p.kind === "renderer")) invoke(305, [
+			if (spec.events.length || spec.lazy || spec.renders || spec.props.some((p) => p.kind === "renderer")) invoke(305, [
 				node,
 				"onNativeEvent",
 				true
@@ -3819,18 +3819,32 @@
 			children(id, wanted) {
 				state(id)?.lazy.set(wanted);
 			},
-			render(id, prop, key, value) {
+			render(id, prop, key, value, kept, live) {
 				const current = state(id);
 				if (!current) return;
+				const render = typeof kept === "function" ? kept : current.props[prop];
+				const existing = current.renders.get(prop)?.get(key);
+				if (live && existing?.signal && existing.render === render) {
+					existing.signal.set(value);
+					return;
+				}
 				reactive.runWithOwner(current.owner, () => reactive.protect(() => {
 					this.unrender(id, prop, key);
-					const render = current.props[prop];
 					if (typeof render !== "function") return;
 					return reactive.root((dispose) => {
 						const holder = dom.rt.element("view");
 						dom.rt.prop(holder, "componentRender", `${prop}\x1f${key}`);
+						let signal = null, arg = value;
+						if (live) {
+							signal = reactive.signal(value);
+							arg = {};
+							for (const name of Object.keys(value)) Object.defineProperty(arg, name, {
+								enumerable: true,
+								get: () => signal()[name]
+							});
+						}
 						try {
-							dom.rt.insert(holder, render(value));
+							dom.rt.insert(holder, reactive.untracked(() => render(arg)));
 							dom.rt.append(current.node, holder);
 						} catch (error) {
 							dispose();
@@ -3840,7 +3854,9 @@
 						if (!entries) current.renders.set(prop, entries = /* @__PURE__ */ new Map());
 						entries.set(key, {
 							holder,
-							dispose
+							dispose,
+							render,
+							signal
 						});
 					});
 				}));

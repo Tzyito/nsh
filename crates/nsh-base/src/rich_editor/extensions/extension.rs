@@ -381,6 +381,20 @@ impl Extension {
         self
     }
 
+    /// More plugins, after those [`Extension::add_plugins`] gave it.
+    pub(crate) fn add_more_plugins(
+        mut self,
+        f: impl Fn(&ExtensionContext<'_>) -> Vec<Plugin> + Send + Sync + 'static,
+    ) -> Self {
+        let before = self.plugins.take();
+        self.plugins = Some(Arc::new(move |cx: &ExtensionContext<'_>| {
+            let mut plugins = before.as_ref().map(|f| f(cx)).unwrap_or_default();
+            plugins.extend(f(cx));
+            plugins
+        }));
+        self
+    }
+
     /// Its named commands (Tiptap's `addCommands`): factories making each
     /// from its JSON arguments and the schema.
     #[must_use]

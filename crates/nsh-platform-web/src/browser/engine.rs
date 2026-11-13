@@ -155,14 +155,21 @@ impl Host for Runtime {
                 prop,
                 key,
                 value,
+                function,
+                reactive,
             } => self.event(
                 "render",
                 (|| {
+                    let function = function
+                        .and_then(|f| f.value(&*self.bindings))
+                        .map_or(Value(0), |f| Value(f.0[0] as u32));
                     Ok(vec![
                         Value::number(host.into()),
                         Value::string(prop)?,
                         Value::string(&key)?,
                         Value(value.render_js(&*self.bindings)?.into_raw().0[0] as u32),
+                        function,
+                        Value(if reactive { 3 } else { 2 }),
                     ])
                 })(),
             ),

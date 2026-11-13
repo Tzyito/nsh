@@ -219,7 +219,12 @@ reasons: `reactive-components.md`.
     comes in; measured empty, a list in a view sized by its content would shrink that view's viewport to nothing
     and render no row. The roots go with their holder or with the component (`core/renders.rs`; `nsh-js`
     `components.rs`). The decoded prop names its host, so a view may pass it on to a nested component's prop. Keys
-    are unique among a component's renders of one prop.
+    are unique among a component's renders of one prop. A view may also render with a JS function it keeps rather than takes
+    as a prop (one an extension of its data returned: `RichEditor`'s node views): `cx.renderer(name, &callback)`
+    makes a `Renderer` of it under `name`, and `JsEvent::Render` carries the function; the component says so with
+    `#[component(renders)]` (`Component::KEEPS_RENDERS`), so JS listens for renders on every instance.
+    `Renderer::reactive()` has the function run once per key: JS gives it props reading a signal of the value (a
+    getter per field), and a new value for the same function sets the signal instead of rendering again.
   - `data: Prop<Rows>`: rows of data the component reads by key, `data: T[]` in TS with `#[props(generic)]` on the
     props (the props generic over `T = any`, as a component with rows is, the default for a component given no rows
     of its own). `Rows` reads each row's number and string fields once, when JS sets the prop, into a column per

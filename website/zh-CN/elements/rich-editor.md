@@ -229,6 +229,49 @@ const editor = createRichEditor({ extensions: [StarterKit, Signature.configure({
 
 `node` 或 `mark`（`defineSchema` 的写法）使它成为节点或标记扩展；`addGlobalAttributes` 为其他类型添加属性；`addProseMirrorPlugins` 返回插件，包括 `RichEditorPlugin`；`addPasteRules` 返回作用于粘贴文本的 `textRule` 与 `markRule` 规则。内置类的 `extend({...})` 替换所给的部分：`Underline.extend({ addKeyboardShortcuts: () => ({ "Mod-Alt-u": toggleMark("underline") }) })`。
 
+### 节点视图
+
+扩展的 `addNodeView` 返回一个组件，用它渲染该类型的每个节点（即 Tiptap 的 `addNodeView`），比如一行文字里的股票标签、一张卡片、一个播放器。节点类型须是原子节点（`atom: true`，或没有 `content`），行内或块级均可。编辑器把它当作一个整体来编辑，光标和点击按它的宽度定位。
+
+```tsx
+import { Text, View } from "nsh";
+import { Button, defineExtension, type RichNodeViewProps } from "nsh/base";
+
+function StockTag(props: RichNodeViewProps) {
+  const bearish = () => props.node.attrs.trend === "2";
+  return (
+    <View class="flex-row items-center gap-1" classList={{ "bg-primary/15": props.selected }}>
+      <Text>{`$${props.node.attrs.name}`}</Text>
+      <Button onPress={() => props.updateAttributes({ trend: bearish() ? "1" : "2" })}>
+        <Text>{bearish() ? "▼ 看跌" : "▲ 看涨"}</Text>
+      </Button>
+    </View>
+  );
+}
+
+const SecurityTag = defineExtension({
+  name: "securityTag",
+  node: { group: "inline", inline: true, atom: true, selectable: true, attrs: { name: {}, trend: { default: "1" } } },
+  addNodeView: () => StockTag,
+});
+```
+
+组件收到 `RichNodeViewProps`：
+
+| 属性 | |
+|---|---|
+| `node` | 节点：`type`（类型名）、`attrs` 和 `textContent`。 |
+| `selected` | 节点选区是否选中了这个节点。 |
+| `editor` | 节点所在的 `RichEditorSession`。 |
+| `extension` | 扩展的 `name` 和 `options`。 |
+| `getPos()` | 节点当前的起始位置；节点被删除后为 `undefined`。 |
+| `updateAttributes(attrs)` | 把 `attrs` 合并进节点属性，作为一次可撤销的改动。 |
+| `deleteNode()` | 删除节点，作为一次可撤销的改动。 |
+
+组件对每个节点只运行一次，props 跟随节点变化：属性或选中状态变化时原地更新 props，组件内部的状态得以保留（比如播放器会继续播放）。和其他组件的 props 一样，在用到的地方读取（在 JSX 里写 `props.node.attrs.trend`）。打字不会调用组件：只有节点本身或其选中状态变化时，编辑器才会传入新值；节点仅仅移动位置时不会。
+
+视图内的按下先交给其中的控件：`Button` 保留自己的按下，选区留在原处。按在视图的其他地方会选中该节点；可拖动的块级节点从这里拖动。按键仍归编辑器处理：退格删除选中的节点，方向键跨过它。
+
 应用的 crate 通过其 UI 集注册用 Rust 编写的扩展，JS 按名称取用：
 
 ```rust

@@ -23,7 +23,7 @@ use super::{Core, Key, NO_KEY};
 use crate::{
     NodeId, Op, TextEngine,
     element::{
-        JsEvent, RenderValue, SharedString,
+        CallbackHandle, JsEvent, RenderValue, SharedString,
         renderer::{RenderAt, RenderPlace},
     },
 };
@@ -63,6 +63,9 @@ struct RenderSlot {
     places: Vec<NodeId>,
     /// The value JS was asked to render last.
     sent: Option<Rc<dyn RenderValue>>,
+    /// The function it was asked to render it with, when the component
+    /// keeps it.
+    function: Option<Rc<dyn CallbackHandle>>,
     /// JS's holder of what it rendered.
     holder: Option<NodeId>,
 }
@@ -103,6 +106,7 @@ impl<M: TextEngine> Core<M> {
                 key: new.0.key.clone(),
                 places: Vec::new(),
                 sent: None,
+                function: None,
                 holder: None,
             });
         entry.places.retain(|&p| p != id);
@@ -264,14 +268,25 @@ impl<M: TextEngine> Core<M> {
             };
             let renders = &mut self.components.renders;
             let slot = renders.slots.get_mut(&key).expect("a slot");
-            let value = renders.places[&place].value.clone();
-            if !slot.sent.as_ref().is_some_and(|v| v.same(&*value)) {
+            let shown = &renders.places[&place];
+            let value = shown.value.clone();
+            let function = shown.function.clone();
+            let reactive = shown.reactive;
+            let same_function = match (&slot.function, &function) {
+                (Some(a), Some(b)) => Rc::ptr_eq(a, b),
+                (None, None) => true,
+                _ => false,
+            };
+            if !same_function || !slot.sent.as_ref().is_some_and(|v| v.same(&*value)) {
                 slot.sent = Some(value.clone());
+                slot.function = function.clone();
                 self.events.push(JsEvent::Render {
                     host: key.0,
                     prop: slot.prop,
                     key: slot.key.clone(),
                     value,
+                    function,
+                    reactive,
                 });
             }
             // Its placeholder may be another one now.

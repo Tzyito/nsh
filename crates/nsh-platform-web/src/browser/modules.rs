@@ -103,6 +103,7 @@ impl Modules {
                 component.set("name", &Value::string(spec.name)?)?;
                 component.set("export", &Value::string(&spec.export)?)?;
                 component.set("lazy", &Value(if spec.lazy_children { 3 } else { 2 }))?;
+                component.set("renders", &Value(if spec.keeps_renders { 3 } else { 2 }))?;
                 let mut props = Vec::new();
                 for prop in &spec.props {
                     let value = Value::object()?;

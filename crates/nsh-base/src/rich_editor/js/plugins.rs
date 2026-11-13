@@ -94,6 +94,8 @@ pub(crate) struct Hooks {
     pub(crate) append: Option<AppendHook>,
     pub(crate) keys: Option<Callback<String>>,
     pub(crate) dispatch: Option<Callback<TransactionJson>>,
+    /// A node view's component (`addNodeView`).
+    pub(crate) node_view: Option<Callback<super::node_views::RichNodeViewProps>>,
 }
 
 thread_local! {

@@ -16,6 +16,7 @@ mod commands;
 mod extension_api;
 mod extensions;
 mod json;
+mod node_views;
 mod plugins;
 mod tables;
 
@@ -126,6 +127,7 @@ pub(crate) fn register(registry: &mut Registry) {
         .class::<RichSchema>()
         .class::<RichEditorSession>()
         .class::<RichEditorPlugin>()
+        .class::<node_views::RichNodeView>()
         .module::<RichEditorApi>()
         .module::<tables::RichTableApi>();
     extension_api::register(registry);
@@ -1103,6 +1105,7 @@ impl RichEditorApi {
             RichEditorSession::over(EditorSession::new(state, NodeViews::new()), schema);
         if let Some(manager) = &manager {
             editor.commands = manager.commands().clone();
+            node_views::note_commands(&editor.session, editor.commands.clone());
         }
         if options.editable == Some(false) {
             editor.session.set_editable(false);

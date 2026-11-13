@@ -316,6 +316,56 @@ to other types; `addProseMirrorPlugins` returns plugins, `RichEditorPlugin`s inc
 `textRule` and `markRule` rules for pasted text. A built-in class's `extend({...})` replaces the parts it gives:
 `Underline.extend({ addKeyboardShortcuts: () => ({ "Mod-Alt-u": toggleMark("underline") }) })`.
 
+### Node views
+
+An extension's `addNodeView` returns a component that renders every node of its type (Tiptap's `addNodeView`): a
+stock tag in a line of text, a card, a player. The node type is an atom (`atom: true`, or no `content`), inline or
+block; the editor edits it as one unit, and the caret and presses place themselves by its width.
+
+```tsx
+import { Text, View } from "nsh";
+import { Button, defineExtension, type RichNodeViewProps } from "nsh/base";
+
+function StockTag(props: RichNodeViewProps) {
+  const bearish = () => props.node.attrs.trend === "2";
+  return (
+    <View class="flex-row items-center gap-1" classList={{ "bg-primary/15": props.selected }}>
+      <Text>{`$${props.node.attrs.name}`}</Text>
+      <Button onPress={() => props.updateAttributes({ trend: bearish() ? "1" : "2" })}>
+        <Text>{bearish() ? "▼ Bearish" : "▲ Bullish"}</Text>
+      </Button>
+    </View>
+  );
+}
+
+const SecurityTag = defineExtension({
+  name: "securityTag",
+  node: { group: "inline", inline: true, atom: true, selectable: true, attrs: { name: {}, trend: { default: "1" } } },
+  addNodeView: () => StockTag,
+});
+```
+
+The component gets `RichNodeViewProps`:
+
+| Prop | |
+|---|---|
+| `node` | The node: `type` (its type's name), `attrs` and `textContent`. |
+| `selected` | Whether a node selection holds the node. |
+| `editor` | The `RichEditorSession` the node is in. |
+| `extension` | The extension's `name` and `options`. |
+| `getPos()` | Where the node starts now; `undefined` once it is gone. |
+| `updateAttributes(attrs)` | Merges `attrs` into the node's attributes, as one change undo takes back. |
+| `deleteNode()` | Deletes the node, as one change undo takes back. |
+
+The component runs once per node. Its props follow the node: a changed attribute or selection updates them in place,
+so what the component made keeps its state (a player keeps playing). Read them where they are used
+(`props.node.attrs.trend` in JSX), as with any component's props. Typing never calls the component: the editor sends
+it a new value only when the node or its selection changes, never when the node only moves.
+
+Presses inside the view are its controls' first: a `Button` keeps its press, and the selection stays where it was.
+A press elsewhere on the view selects its node; a draggable block node drags from there. Keys stay the editor's:
+Backspace deletes a selected node, and the arrows step over it.
+
 An app's crate registers extensions written in Rust through its UI set, and JS takes them by name:
 
 ```rust

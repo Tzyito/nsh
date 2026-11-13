@@ -19,6 +19,7 @@ use super::session::EditorSession;
 use crate::rich_editor::{
     model::{Mark, Node},
     state::{ClickEvent, Decoration, KeyEvent},
+    view::RichEditorEvent,
 };
 
 /// What happened inside a node view, offered to it before the editor acts
@@ -46,6 +47,12 @@ pub struct NodeViewCx {
     selected: ReadSignal<bool>,
     decorations: ReadSignal<Vec<Decoration>>,
     content: RefCell<Option<AnyElement>>,
+    /// What tells this node's element from the view's others for as long
+    /// as it shows the node: the type, the block's id and, inline, the
+    /// node's index among its type's in the textblock.
+    pub(crate) key: SharedString,
+    /// The editor component's scope (JS node views render under it).
+    pub(crate) scope: Option<Scope<RichEditorEvent>>,
 }
 
 impl fmt::Debug for NodeViewCx {
@@ -72,7 +79,20 @@ impl NodeViewCx {
             selected,
             decorations,
             content: RefCell::new(content),
+            key: SharedString::default(),
+            scope: None,
         }
+    }
+
+    /// Its node's `key` in the view, and the editor's `scope`.
+    pub(crate) fn placed(
+        mut self,
+        key: SharedString,
+        scope: Option<Scope<RichEditorEvent>>,
+    ) -> Self {
+        self.key = key;
+        self.scope = scope;
+        self
     }
 
     /// Where the node starts in the current document (ProseMirror's

@@ -1458,25 +1458,35 @@ pub fn assets(input: TokenStream) -> TokenStream {
 /// component: `StatusBar.setHidden(..)`).
 /// `#[component(methods = StepperApi)]` gives its ref in JS the methods of
 /// that [`methods`] API, which the view registers with `cx.methods(..)`.
+/// `#[component(renders)]`: the view renders with JS functions it keeps
+/// (`cx.renderer(..)`), not only with its render props.
 #[proc_macro_attribute]
 pub fn component(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut methods = None;
+    let mut renders = false;
     let parser = syn::meta::parser(|meta| {
         if meta.path.is_ident("methods") {
             methods = Some(meta.value()?.parse::<syn::Path>()?);
             Ok(())
+        } else if meta.path.is_ident("renders") {
+            renders = true;
+            Ok(())
         } else {
-            Err(meta.error("`#[component]` takes `methods = Api`"))
+            Err(meta.error("`#[component]` takes `methods = Api` and `renders`"))
         }
     });
     parse_macro_input!(attr with parser);
     let item = parse_macro_input!(item as ItemFn);
-    component_fn(item, methods)
+    component_fn(item, methods, renders)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }
 
-fn component_fn(item: ItemFn, methods: Option<syn::Path>) -> syn::Result<TokenStream2> {
+fn component_fn(
+    item: ItemFn,
+    methods: Option<syn::Path>,
+    renders: bool,
+) -> syn::Result<TokenStream2> {
     let ui = quote!(::nsh_core::element);
     let sig = &item.sig;
     if !sig.generics.params.is_empty() || sig.asyncness.is_some() {
@@ -1537,6 +1547,11 @@ fn component_fn(item: ItemFn, methods: Option<syn::Path>) -> syn::Result<TokenSt
     };
     let methods =
         methods.map(|api| quote!(const METHODS: #ui::Methods = #ui::Methods::of::<#api>();));
+    let renders = renders.then(|| {
+        quote!(
+            const KEEPS_RENDERS: bool = true;
+        )
+    });
     let doc = decl(&docs(attrs));
     // Its element, made like a primitive's: `button().disabled(..)`.
     let element = format_ident!("{}Element", name);
@@ -1621,6 +1636,7 @@ fn component_fn(item: ItemFn, methods: Option<syn::Path>) -> syn::Result<TokenSt
             type Event = #event;
             const DOC: &'static str = #doc;
             #methods
+            #renders
 
             #[allow(unused_variables)]
             fn view(#props_pat: #props_ty, #scope_pat: #scope_ty) -> #output #body
