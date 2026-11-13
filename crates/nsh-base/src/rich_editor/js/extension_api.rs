@@ -23,6 +23,7 @@ use regex::Regex;
 
 use super::{
     commands::{RichCommand, attrs_of, resolve_with},
+    node_views::{JsNodeView, NodeViewExtension, RichNodeViewProps, node_view_plugin},
     plugins::{
         KeyBindings, PluginEntry, RichInputRule, RichInputRuleKind, input_rule_list, plugins_of,
     },
@@ -73,6 +74,7 @@ pub(crate) struct JsHooks {
     add_prose_mirror_plugins: Option<Callback<JsonValue, Vec<PluginEntry>>>,
     add_global_attributes: Option<Callback<JsonValue, JsonValue>>,
     add_storage: Option<Callback<JsonValue, JsonValue>>,
+    add_node_view: Option<Callback<JsonValue, NodeViewComponent>>,
 }
 
 impl JsHooks {
@@ -102,6 +104,7 @@ impl JsHooks {
                 .clone()
                 .or(self.add_global_attributes.clone()),
             add_storage: other.add_storage.clone().or(self.add_storage.clone()),
+            add_node_view: other.add_node_view.clone().or(self.add_node_view.clone()),
         }
     }
 }
@@ -134,6 +137,8 @@ export interface RichExtensionConfig {
   addGlobalAttributes?: (options: any) => { types: string[]; attributes: Record<string, unknown> }[];
   /** Its storage's first value. */
   addStorage?: (options: any) => unknown;
+  /** The component that renders its nodes, inline or block (Tiptap's `addNodeView`): it runs once per node and gets `RichNodeViewProps`. The node type is an atom (`atom: true`, or no `content`). */
+  addNodeView?: (options: any) => (props: RichNodeViewProps) => JSX.Element;
 }";
 
 impl Arg for RichExtensionConfig {
@@ -143,6 +148,10 @@ impl Arg for RichExtensionConfig {
                 .replace("{command}", &<RichCommand as JsValue>::ts_type(types))
                 .replace("{rule}", &<RichInputRule as JsValue>::ts_type(types))
                 .replace("{plugin}", &<PluginEntry as JsValue>::ts_type(types))
+                .replace(
+                    "RichNodeViewProps) =>",
+                    &format!("{}) =>", <RichNodeViewProps as JsValue>::ts_type(types)),
+                )
         })
     }
 
@@ -170,12 +179,31 @@ impl Arg for RichExtensionConfig {
                 add_prose_mirror_plugins: field(&value, "addProseMirrorPlugins")?,
                 add_global_attributes: field(&value, "addGlobalAttributes")?,
                 add_storage: field(&value, "addStorage")?,
+                add_node_view: field(&value, "addNodeView")?,
             },
         })
     }
 
     fn classes(out: &mut Vec<&'static nsh_core::element::ClassDef>) {
         <PluginEntry as Arg>::classes(out);
+    }
+}
+
+/// What `addNodeView` returns: the app's component.
+#[derive(Clone)]
+pub(crate) struct NodeViewComponent(Callback<RichNodeViewProps>);
+
+impl JsValue for NodeViewComponent {
+    fn ts_type(types: &mut TsTypes) -> String {
+        <Callback<RichNodeViewProps> as Arg>::ts_type(types)
+    }
+
+    fn from_js(value: JsIn<'_>) -> Result<Self, PropError> {
+        <Callback<RichNodeViewProps> as Arg>::from_js(value).map(Self)
+    }
+
+    fn to_js<'a>(&self, host: &'a dyn JsHost) -> Result<JsOwned<'a>, PropError> {
+        Ok(JsOwned::new(host, host.null()))
     }
 }
 
@@ -203,6 +231,7 @@ pub(crate) struct RichExtension {
     add_prose_mirror_plugins: Option<Callback<JsonValue, Vec<PluginEntry>>>,
     add_global_attributes: Option<Callback<JsonValue, JsonValue>>,
     add_storage: Option<Callback<JsonValue, JsonValue>>,
+    add_node_view: Option<Callback<JsonValue, NodeViewComponent>>,
 }
 
 impl RichExtension {
@@ -225,6 +254,7 @@ impl RichExtension {
             add_prose_mirror_plugins: hooks.add_prose_mirror_plugins,
             add_global_attributes: hooks.add_global_attributes,
             add_storage: hooks.add_storage,
+            add_node_view: hooks.add_node_view,
         }
     }
 
@@ -240,6 +270,7 @@ impl RichExtension {
                 add_prose_mirror_plugins: self.add_prose_mirror_plugins.clone(),
                 add_global_attributes: self.add_global_attributes.clone(),
                 add_storage: self.add_storage.clone(),
+                add_node_view: self.add_node_view.clone(),
             },
             ..self.def.clone()
         }
@@ -389,6 +420,39 @@ impl RichExtension {
                 .call(options.clone())
                 .map_err(|e| call_error("addStorage", e))?;
             ext = ext.add_storage(move |_| value.clone());
+        }
+        if let Some(hook) = &hooks.add_node_view {
+            let component = hook
+                .call(options.clone())
+                .map_err(|e| call_error("addNodeView", e))?;
+            let view = JsNodeView::new(
+                component.0,
+                NodeViewExtension {
+                    name: name.clone(),
+                    options: options.clone(),
+                },
+            );
+            let diagnostics = diagnostics.clone();
+            ext = ext.add_more_plugins(move |cx| match cx.schema.node_type(cx.name) {
+                Some(ty) if ty.is_atom() => vec![node_view_plugin(cx.name, view.clone())],
+                Some(_) => {
+                    report(
+                        &diagnostics,
+                        format!(
+                            "{}: addNodeView renders atoms only (`atom: true`, or no `content`)",
+                            cx.name
+                        ),
+                    );
+                    Vec::new()
+                }
+                None => {
+                    report(
+                        &diagnostics,
+                        format!("{}: addNodeView needs the extension's node type", cx.name),
+                    );
+                    Vec::new()
+                }
+            });
         }
         Ok(ext)
     }

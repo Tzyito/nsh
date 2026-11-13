@@ -7,6 +7,7 @@
 mod commands;
 mod extensions;
 mod marks_clipboard_history;
+mod node_views;
 mod selection;
 mod sizing;
 mod structure;

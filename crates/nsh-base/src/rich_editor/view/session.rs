@@ -297,6 +297,22 @@ struct Shared {
 #[derive(Clone)]
 pub struct EditorSession(Arc<Shared>);
 
+/// A handle of an [`EditorSession`] that does not keep it alive.
+#[derive(Clone)]
+pub(crate) struct WeakSession(std::sync::Weak<Shared>);
+
+impl WeakSession {
+    /// Whether the session is still alive.
+    pub(crate) fn alive(&self) -> bool {
+        self.0.strong_count() > 0
+    }
+
+    /// Whether it is `session`'s.
+    pub(crate) fn is(&self, session: &EditorSession) -> bool {
+        std::ptr::eq(self.0.as_ptr(), Arc::as_ptr(&session.0))
+    }
+}
+
 impl PartialEq for EditorSession {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
@@ -330,6 +346,11 @@ impl EditorSession {
             focused: AtomicBool::new(false),
             editable: AtomicBool::new(true),
         }))
+    }
+
+    /// A handle that does not keep the session alive.
+    pub(crate) fn downgrade(&self) -> WeakSession {
+        WeakSession(Arc::downgrade(&self.0))
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {

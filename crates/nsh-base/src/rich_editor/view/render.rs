@@ -10,7 +10,12 @@
 //! attachments in it), a node view's element where the app renders nodes
 //! of a type itself.
 
-use std::{cell::Cell, rc::Rc, sync::Arc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    rc::Rc,
+    sync::Arc,
+};
 
 use nsh_core::{
     PropertyValue, StyleDecl, StyleKey,
@@ -136,6 +141,7 @@ fn content(rv: Rv) -> impl IntoElement {
     let (long, lift, armed, sweep) = (rv.clone(), rv.clone(), rv.clone(), rv.clone());
     let over = rv.clone();
     let claim = rv.clone();
+    let unclaimed = rv.clone();
     let placed = rv.clone();
     let height = rv.content_height;
     part(
@@ -190,22 +196,35 @@ fn content(rv: Rv) -> impl IntoElement {
     // Not from a task's checkbox: a responder granted after the pointer
     // moved takes the press from the view under it, and a hand moves as it
     // clicks, so the checkbox would miss presses.
+    // Nor from a node view: a control in it (a button) keeps its press;
+    // a press on the view's own area is claimed once it moves (it drags
+    // the node), else released with the press.
     .claim_touches(TouchClaim::on_start().ask(move |request: &ClaimRequest| {
         let page = request.event.page;
-        let on_checkbox = claim
+        let at = claim
             .page_shift()
-            .is_some_and(|shift| claim.on_checkbox(Point::new(page.x + shift.x, page.y + shift.y)));
-        if desktop && !on_checkbox {
+            .map(|shift| Point::new(page.x + shift.x, page.y + shift.y));
+        let on_control =
+            at.is_some_and(|at| claim.on_checkbox(at) || claim.node_view_at(at).is_some());
+        if desktop && !on_control {
             request.claim();
         }
     }))
     .claim_touches(TouchClaim::on_move().ask(move |request: &ClaimRequest| {
-        if !desktop && armed.sweep_armed() {
+        if (!desktop && armed.sweep_armed()) || (desktop && armed.view_press.get()) {
             request.claim();
         }
     }))
+    .when(desktop, |v| {
+        v.on(EventKind::PressUp, move |_: &EventPayload| {
+            if unclaimed.view_press.replace(false) {
+                unclaimed.release();
+            }
+        })
+    })
     .keep_touches(true)
     .on_responder_grant(move |_: &ResponderEvent| {
+        sweep.view_press.set(false);
         if !desktop {
             sweep.begin_sweep();
         }
@@ -1006,6 +1025,12 @@ fn utf16_slice(text: &str, from: usize, to: usize) -> String {
 fn text_block(rv: Rv, item: ReadSignal<BlockItem>, owner: u64) -> impl IntoElement {
     let id = item.get_untracked().id;
     let inline_rv = rv.clone();
+    let places = InlinePlaces::default();
+    let places_now = places.clone();
+    {
+        let places = places.clone();
+        cleanup(move || places.clear());
+    }
     let content = computed(move || {
         inline_rv.deco_rev.get();
         let it = item.get();
@@ -1031,6 +1056,9 @@ fn text_block(rv: Rv, item: ReadSignal<BlockItem>, owner: u64) -> impl IntoEleme
             }
             geo.map = inline.map.clone();
         }
+        // Where its node views are now, for their `getPos`: a move of the
+        // block or an edit before one draws nothing again.
+        places_now.place(&inline_rv, start, &inline.pieces);
         inline
     });
     let ph_rv = rv.clone();
@@ -1049,7 +1077,7 @@ fn text_block(rv: Rv, item: ReadSignal<BlockItem>, owner: u64) -> impl IntoEleme
         .child(dynamic(move || {
             let inline = content.get();
             let start = item.get_untracked().pos + 1;
-            let mut list = spans(&spans_rv, inline.pieces.clone(), id, start);
+            let mut list = spans(&spans_rv, inline.pieces.clone(), id, start, &places);
             if inline.pieces == [Piece::Filler]
                 && let Some(label) = placeholder.get()
             {
@@ -1128,8 +1156,15 @@ fn placeholder_text(rv: &Rv, it: &BlockItem) -> Option<String> {
 
 /// The spans of a textblock's pieces (textblock `id`, its content at
 /// `start`).
-fn spans(rv: &Rv, pieces: Vec<Piece>, id: u64, start: usize) -> Vec<AnyElement> {
+fn spans(
+    rv: &Rv,
+    pieces: Vec<Piece>,
+    id: u64,
+    start: usize,
+    places: &InlinePlaces,
+) -> Vec<AnyElement> {
     let props = rv.props;
+    let mut counts = InlineCounts::default();
     pieces
         .into_iter()
         .map(|piece| match piece {
@@ -1186,7 +1221,10 @@ fn spans(rv: &Rv, pieces: Vec<Piece>, id: u64, start: usize) -> Vec<AnyElement> 
                     .into_element()
             }
             Piece::Leaf { node, offset, text } => {
-                leaf(rv, node, (id, offset), start + offset, text)
+                let n = counts.next(node.ty().name());
+                let place = places.get(node.ty().name(), n, start + offset);
+                let key = SharedString::from(format!("{}:{id}:{n}", node.ty().name()));
+                leaf(rv, node, (id, offset), place, key, text)
             }
             Piece::Widget { class } => view()
                 .app_class(class.map(SharedString::from))
@@ -1225,7 +1263,14 @@ fn inline_box(rv: &Rv, el: View, (id, offset): (u64, usize)) -> View {
 /// An inline leaf: its one-character text (a line break), its node view,
 /// the text it is drawn as (`drawn`, [`Rv::leaf_text`]), else a box of its
 /// part.
-fn leaf(rv: &Rv, node: Node, at: (u64, usize), pos: usize, drawn: Option<String>) -> AnyElement {
+fn leaf(
+    rv: &Rv,
+    node: Node,
+    at: (u64, usize),
+    place: Rc<Cell<Option<usize>>>,
+    key: SharedString,
+    drawn: Option<String>,
+) -> AnyElement {
     let props = rv.props;
     let classes_node = node.clone();
     let styled = move |el: View| {
@@ -1243,15 +1288,35 @@ fn leaf(rv: &Rv, node: Node, at: (u64, usize), pos: usize, drawn: Option<String>
         })
     };
     if let Some(view) = rv.node_view(node.ty().name()) {
-        let get_pos: Rc<dyn Fn() -> Option<usize>> = Rc::new(move || Some(pos));
+        let pos = place.clone();
+        let get_pos: Rc<dyn Fn() -> Option<usize>> = Rc::new(move || pos.get());
+        // Selected while a node selection holds the position it is at now.
+        let selected = signal(false);
+        {
+            let rv = rv.clone();
+            effect(move || {
+                rv.sel_rev.get();
+                rv.doc_rev.get();
+                let now = {
+                    let state = rv.st.borrow();
+                    let s = state.selection();
+                    s.as_node().is_some() && Some(s.from()) == place.get()
+                };
+                if selected.get_untracked() != now {
+                    selected.set(now);
+                }
+            });
+        }
+        let selected = selected.read_only();
         let cx = NodeViewCx::new(
             rv.session.clone(),
             get_pos,
             signal(node.clone()).read_only(),
-            signal(false).read_only(),
+            selected,
             signal(Vec::new()).read_only(),
             None,
-        );
+        )
+        .placed(key, Some(rv.cx));
         let el = view.create(&cx, &node);
         cleanup(move || view.destroy());
         return inline_box(rv, styled(view_box()), at)
@@ -1295,6 +1360,79 @@ fn leaf(rv: &Rv, node: Node, at: (u64, usize), pos: usize, drawn: Option<String>
 
 fn view_box() -> View {
     view()
+}
+
+/// Where a textblock's inline node views are, by type and index among
+/// the type's leaves in the block: what their `getPos` reads, outside the
+/// reactive graph (a JS node view's calls run in JS's). Each textblock's
+/// own; emptied when it goes.
+#[derive(Clone, Default)]
+struct InlinePlaces(Rc<RefCell<HashMap<(String, usize), Place>>>);
+
+/// Where a node is now (`None` once it is gone).
+type Place = Rc<Cell<Option<usize>>>;
+
+impl InlinePlaces {
+    /// The leaves of `pieces` with node views are at `start` plus their
+    /// offsets now; the places of leaves gone are emptied.
+    fn place(&self, rv: &Rv, start: usize, pieces: &[Piece]) {
+        let mut map = self.0.borrow_mut();
+        if map.is_empty() && !pieces.iter().any(|p| matches!(p, Piece::Leaf { .. })) {
+            return;
+        }
+        let mut counts = InlineCounts::default();
+        let mut seen = Vec::new();
+        for piece in pieces {
+            let Piece::Leaf { node, offset, .. } = piece else {
+                continue;
+            };
+            let name = node.ty().name();
+            let n = counts.next(name);
+            if rv.node_view(name).is_none() {
+                continue;
+            }
+            let key = (name.to_owned(), n);
+            map.entry(key.clone())
+                .or_default()
+                .set(Some(start + offset));
+            seen.push(key);
+        }
+        map.retain(|key, place| {
+            let kept = seen.contains(key);
+            if !kept {
+                place.set(None);
+            }
+            kept
+        });
+    }
+
+    /// The place of the `n`th leaf of type `name`, at `pos` now.
+    fn get(&self, name: &str, n: usize, pos: usize) -> Place {
+        let mut map = self.0.borrow_mut();
+        let place = map.entry((name.to_owned(), n)).or_default();
+        place.set(Some(pos));
+        place.clone()
+    }
+
+    /// The textblock went: its node views are nowhere.
+    fn clear(&self) {
+        for place in self.0.borrow_mut().drain().map(|(_, p)| p) {
+            place.set(None);
+        }
+    }
+}
+
+/// Counts a textblock's leaves by type, in order.
+#[derive(Default)]
+struct InlineCounts(HashMap<String, usize>);
+
+impl InlineCounts {
+    /// The index of the next leaf of type `name`.
+    fn next(&mut self, name: &str) -> usize {
+        let count = self.0.entry(name.to_owned()).or_default();
+        *count += 1;
+        *count - 1
+    }
 }
 
 /// A node view's element for a block, made again when the view's
@@ -1346,6 +1484,7 @@ fn node_view_block(rv: Rv, item: ReadSignal<BlockItem>, view: Arc<dyn NodeView>)
                 .editable_content_slot()
                 .then(|| slot(rv.clone(), item, id, &current));
             let get_pos: Rc<dyn Fn() -> Option<usize>> = Rc::new(move || pos.get());
+            let key = SharedString::from(format!("{}:{id}", current.ty().name()));
             let cx = NodeViewCx::new(
                 rv.session.clone(),
                 get_pos,
@@ -1353,7 +1492,8 @@ fn node_view_block(rv: Rv, item: ReadSignal<BlockItem>, view: Arc<dyn NodeView>)
                 selected.read_only(),
                 decorations.read_only(),
                 content,
-            );
+            )
+            .placed(key, Some(rv.cx));
             let el = view.create(&cx, &current);
             let destroyed = view.clone();
             cleanup(move || destroyed.destroy());

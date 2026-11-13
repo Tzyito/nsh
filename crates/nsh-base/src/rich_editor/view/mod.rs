@@ -33,6 +33,7 @@ use nsh_core::prelude::*;
 use serde_json::Value;
 
 use self::controller::Rv;
+pub(crate) use self::session::WeakSession;
 pub use self::{
     node_view::{MarkView, NodeView, NodeViewCx, NodeViewEvent},
     parts::{PartStyles, RichEditorClasses, RichEditorStyles},
@@ -270,7 +271,7 @@ impl RichEditorApi {
 /// views for the types the app renders itself, the plugins' decorations),
 /// a caret and selection, the platform's typing, input methods, keys,
 /// presses, drags and clipboard turned into transactions natively.
-#[component(methods = RichEditorApi)]
+#[component(methods = RichEditorApi, renders)]
 pub fn RichEditor(props: RichEditorProps, cx: Scope<RichEditorEvent>) -> impl IntoElement {
     let rv = Rv::new(props, cx);
     cx.methods(RichEditorApi { rv: rv.clone() });

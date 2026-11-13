@@ -380,6 +380,12 @@ impl JsHost for Bindings {
     fn keys(&self, value: JsRaw) -> Result<Vec<String>, PropError> {
         Value::borrowed(id(value)).keys()
     }
+    fn invoke(&self, value: JsRaw, name: &str, args: &[JsRaw]) -> Result<JsRaw, PropError> {
+        let target = Value::borrowed(id(value));
+        let method = target.get(name)?;
+        let args = Value::array(args.iter().map(|a| Value::borrowed(id(*a))))?;
+        method.call(&target, &args).map(owned)
+    }
     fn primitives(&self, value: JsRaw) -> Result<Option<Vec<JsPrimitive>>, PropError> {
         let items = Value::borrowed(id(value)).primitives(false)?;
         Ok(items.map(|items| items.into_iter().map(|(_, v)| v).collect()))

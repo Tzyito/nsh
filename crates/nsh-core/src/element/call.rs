@@ -184,6 +184,13 @@ pub enum JsEvent {
         key: super::SharedString,
         /// The value to render.
         value: std::rc::Rc<dyn super::RenderValue>,
+        /// The function to render with, when the component keeps it
+        /// ([`super::Scope::renderer`]) rather than takes it as `prop`.
+        function: Option<std::rc::Rc<dyn super::CallbackHandle>>,
+        /// The value updates what was rendered for the key in place
+        /// ([`super::Renderer::reactive`]): JS sets the props it gave the
+        /// function, and renders again only for another function.
+        reactive: bool,
     },
     /// No element of the component's render (`prop`, `key`) is placed any
     /// more ([`Self::Render`]): JS removes its holder and disposes what it

@@ -58,6 +58,22 @@ impl<E: Event> Scope<E> {
     pub fn insets(&self) -> crate::EdgeInsets {
         super::insets_of(self.host)
     }
+
+    /// A renderer of `function`, a JS function the component keeps rather
+    /// than takes as a prop (a function an extension of its data
+    /// returned), named `name` among the component's render functions (a
+    /// name none of its props has). What it renders sees the component's
+    /// context, as a render prop's content does.
+    pub fn renderer<T, R>(
+        &self,
+        name: &'static str,
+        function: &super::Callback<T, R>,
+    ) -> super::Renderer<T>
+    where
+        T: super::JsValue + Clone + PartialEq + 'static,
+    {
+        super::Renderer::kept(name, self.host, function.handle().clone())
+    }
 }
 
 /// The instance of a component that runs once.

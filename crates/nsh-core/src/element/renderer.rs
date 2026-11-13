@@ -12,12 +12,22 @@
 //! ([`super::JsEvent::Unrender`]). JS renders into a holder view of its own
 //! (`componentRender`), which it inserts into the host; the core places the
 //! holder as the placeholder's only child (`core/components.rs`).
+//!
+//! A component can also render with a JS function it keeps rather than
+//! one of its props (an editor extension's node view): [`Scope::renderer`]
+//! names it among the component's renders, and the core hands the function
+//! to JS with the value. A [`Renderer::reactive`] renderer has the app's
+//! function run once per key: JS gives it the value as props that follow
+//! the value placed, so a new value updates what it rendered in place
+//! (a video keeps playing) instead of rendering it again.
+//!
+//! [`Scope::renderer`]: super::Scope::renderer
 
 use std::{any::Any, cell::Cell, fmt, rc::Rc};
 
 use super::{
-    AnyElement, ElNode, Element, Interactive, IntoElement, JsHost, JsOwned, JsValue, PropError,
-    SharedString,
+    AnyElement, CallbackHandle, ElNode, Element, Interactive, IntoElement, JsHost, JsOwned,
+    JsValue, PropError, SharedString,
 };
 use crate::{NodeId, Tag};
 
@@ -29,12 +39,18 @@ use crate::{NodeId, Tag};
 /// with an equal value, and is rendered again when the value changes.
 pub struct Renderer<T> {
     kind: Kind<T>,
+    reactive: bool,
 }
 
 enum Kind<T> {
     /// The app's JS function: the prop of this name of the component on
-    /// node `host`.
-    Js { prop: &'static str, host: NodeId },
+    /// node `host`, or `function`, which the component keeps, rendered
+    /// under that name.
+    Js {
+        prop: &'static str,
+        host: NodeId,
+        function: Option<Rc<dyn CallbackHandle>>,
+    },
     /// A Rust view's closure.
     Rust(Rc<dyn Fn(&T) -> AnyElement>),
 }
@@ -43,27 +59,57 @@ impl<T> Clone for Renderer<T> {
     fn clone(&self) -> Self {
         Self {
             kind: match &self.kind {
-                Kind::Js { prop, host } => Kind::Js { prop, host: *host },
+                Kind::Js {
+                    prop,
+                    host,
+                    function,
+                } => Kind::Js {
+                    prop,
+                    host: *host,
+                    function: function.clone(),
+                },
                 Kind::Rust(f) => Kind::Rust(f.clone()),
             },
+            reactive: self.reactive,
         }
     }
 }
 
 impl<T> PartialEq for Renderer<T> {
     fn eq(&self, other: &Self) -> bool {
-        match (&self.kind, &other.kind) {
-            (Kind::Js { prop: a, host: h }, Kind::Js { prop: b, host: k }) => a == b && h == k,
+        let kind = match (&self.kind, &other.kind) {
+            (
+                Kind::Js {
+                    prop: a,
+                    host: h,
+                    function: f,
+                },
+                Kind::Js {
+                    prop: b,
+                    host: k,
+                    function: g,
+                },
+            ) => a == b && h == k && same_function(f, g),
             (Kind::Rust(a), Kind::Rust(b)) => Rc::ptr_eq(a, b),
             _ => false,
-        }
+        };
+        kind && self.reactive == other.reactive
+    }
+}
+
+/// Whether two renders call the same kept function (or both a prop's).
+fn same_function(a: &Option<Rc<dyn CallbackHandle>>, b: &Option<Rc<dyn CallbackHandle>>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => Rc::ptr_eq(a, b),
+        (None, None) => true,
+        _ => false,
     }
 }
 
 impl<T> fmt::Debug for Renderer<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.kind {
-            Kind::Js { prop, host } => write!(f, "Renderer({prop} of {host})"),
+            Kind::Js { prop, host, .. } => write!(f, "Renderer({prop} of {host})"),
             Kind::Rust(_) => write!(f, "Renderer(<closure>)"),
         }
     }
@@ -93,7 +139,33 @@ impl<T: JsValue + Clone + PartialEq + 'static> Renderer<T> {
     pub fn new<E: IntoElement>(f: impl Fn(&T) -> E + 'static) -> Self {
         Self {
             kind: Kind::Rust(Rc::new(move |value| f(value).into_element())),
+            reactive: false,
         }
+    }
+
+    /// The app's JS function `function`, which the component on node `host`
+    /// keeps (not one of its props), rendering under `name`
+    /// ([`super::Scope::renderer`]).
+    pub(crate) fn kept(name: &'static str, host: NodeId, function: Rc<dyn CallbackHandle>) -> Self {
+        Self {
+            kind: Kind::Js {
+                prop: name,
+                host,
+                function: Some(function),
+            },
+            reactive: false,
+        }
+    }
+
+    /// The app's JS function runs once per key, and reads the value as
+    /// props that follow it: placing the key with a new value updates
+    /// them in place, where it would render the content again (what it
+    /// rendered keeps its state: a player keeps playing, a field its
+    /// text). Each of the value's fields is a prop. A Rust closure is
+    /// called each time [`Renderer::render`] is, either way.
+    pub fn reactive(mut self) -> Self {
+        self.reactive = true;
+        self
     }
 
     /// The app's function in prop `prop` of the component whose props are
@@ -107,7 +179,12 @@ impl<T: JsValue + Clone + PartialEq + 'static> Renderer<T> {
     #[doc(hidden)]
     pub fn __js_of(prop: &'static str, host: NodeId) -> Self {
         Self {
-            kind: Kind::Js { prop, host },
+            kind: Kind::Js {
+                prop,
+                host,
+                function: None,
+            },
+            reactive: false,
         }
     }
 
@@ -123,12 +200,18 @@ impl<T: JsValue + Clone + PartialEq + 'static> Renderer<T> {
         let mut node = ElNode::new(Tag::View);
         match &self.kind {
             Kind::Rust(f) => node.children.push(f(&value).0),
-            Kind::Js { prop, host } => {
+            Kind::Js {
+                prop,
+                host,
+                function,
+            } => {
                 node.attrs.render = Some(RenderAt(Rc::new(RenderPlace {
                     host: *host,
                     prop,
                     key: key.into(),
                     value: Rc::new(value),
+                    function: function.clone(),
+                    reactive: self.reactive,
                 })));
             }
         }
@@ -189,6 +272,11 @@ pub(crate) struct RenderPlace {
     pub(crate) prop: &'static str,
     pub(crate) key: SharedString,
     pub(crate) value: Rc<dyn RenderValue>,
+    /// The function the component keeps, when not its prop's.
+    pub(crate) function: Option<Rc<dyn CallbackHandle>>,
+    /// The value updates what was rendered in place
+    /// ([`Renderer::reactive`]).
+    pub(crate) reactive: bool,
 }
 
 impl RenderPlace {
@@ -208,7 +296,12 @@ impl PartialEq for RenderAt {
     fn eq(&self, other: &Self) -> bool {
         let (a, b) = (&*self.0, &*other.0);
         Rc::ptr_eq(&self.0, &other.0)
-            || (a.host == b.host && a.prop == b.prop && a.key == b.key && a.value.same(&*b.value))
+            || (a.host == b.host
+                && a.prop == b.prop
+                && a.key == b.key
+                && a.reactive == b.reactive
+                && same_function(&a.function, &b.function)
+                && a.value.same(&*b.value))
     }
 }
 

@@ -55,6 +55,12 @@ pub trait Component: 'static {
     /// comment (none by default).
     const DOC: &'static str = "";
 
+    /// Its view renders with JS functions it keeps
+    /// ([`super::Scope::renderer`]), besides its render props
+    /// (`#[component(renders)]`; false by default): JS listens for their
+    /// renders on every instance.
+    const KEEPS_RENDERS: bool = false;
+
     /// What it shows: its elements, with bindings where values change (TS:
     /// a component's body). Runs once, under an owner of its own: what it
     /// makes (signals, effects, timers) goes with the component.
@@ -401,6 +407,8 @@ pub struct ComponentSpec {
     /// Its props are generic over `T`, the type of the rows one takes
     /// (`#[props(generic)]`), as a component with [`super::Items`] is.
     pub generic: bool,
+    /// It renders with JS functions it keeps ([`Component::KEEPS_RENDERS`]).
+    pub keeps_renders: bool,
 }
 
 /// The props JS sets on a component's host as on a view (TSX's
@@ -455,6 +463,12 @@ impl ComponentSpec {
             C::Props::LAZY_CHILDREN,
             C::Props::GENERIC,
         )
+        .keeping_renders(C::KEEPS_RENDERS)
+    }
+
+    fn keeping_renders(mut self, keeps: bool) -> Self {
+        self.keeps_renders = keeps;
+        self
     }
 
     /// [`Self::of`] past what depends on the component's type.
@@ -480,6 +494,7 @@ impl ComponentSpec {
             types,
             lazy_children,
             generic,
+            keeps_renders: false,
         }
     }
 

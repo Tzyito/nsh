@@ -168,6 +168,11 @@ pub(crate) struct Rv {
     sink: Rc<RefCell<Sink>>,
     next_composition: Rc<Cell<i64>>,
     drag: Rc<RefCell<Option<Drag>>>,
+    /// A mouse press on a node view's own area (no control in it took
+    /// it), which the content did not claim as it went down (a control
+    /// there keeps its press): claimed once it moves, so the node drags,
+    /// else released with the press.
+    pub(crate) view_press: Rc<Cell<bool>>,
     /// The content point less the page point of the last pointer over the
     /// content, and the scroll offset then: how a drag the app starts
     /// from a page point (a drag handle's) maps into the content.
@@ -238,6 +243,7 @@ impl Rv {
             sink: Rc::default(),
             next_composition: Rc::new(Cell::new(1)),
             drag: Rc::default(),
+            view_press: Rc::default(),
             pointer: Rc::default(),
             drop_at: signal(None),
             goal_x: Rc::default(),
@@ -1382,6 +1388,13 @@ impl Rv {
             return;
         }
         let Some(hit) = self.hit(at) else { return };
+        // A press on an inline node view's box selects its node, as one on
+        // a block's does (prosemirror-view's `selectClickedLeaf`).
+        let hit = match hit {
+            Hit::Text(..) => self.inline_view_at(at).map_or(hit, Hit::Node),
+            hit => hit,
+        };
+        self.view_press.set(self.node_view_at(at).is_some());
         let state = self.session.state();
         let doc = state.doc().clone();
         let mod_key = if apple_keys() {
@@ -2085,8 +2098,50 @@ impl Rv {
             .flatten()
             .find(|b| b.pos == pos)
             .map(|b| b.id);
-        id.and_then(|id| self.geo.borrow().origin(id))
+        let geo = self.geo.borrow();
+        // An inline node's box is where its one position is drawn.
+        id.and_then(|id| geo.origin(id))
+            .or_else(|| geo.range_rects(pos, pos + 1).first().map(|b| b.origin))
             .unwrap_or_default()
+    }
+
+    /// The node view the content point `at` is on, when one is (a block's
+    /// or an inline node's): its node's position. Presses there are the
+    /// controls' in it first, as ProseMirror's `stopEvent` keeps them from
+    /// the editor.
+    pub(crate) fn node_view_at(&self, at: Point<Points>) -> Option<usize> {
+        match self.hit(at)? {
+            Hit::Node(p) => {
+                let node = self.session.state().doc().node_at(p)?;
+                self.node_view(node.ty().name()).map(|_| p)
+            }
+            Hit::Text(..) => self.inline_view_at(at),
+        }
+    }
+
+    /// The inline node view whose box holds the content point `at`: its
+    /// node's position.
+    pub(crate) fn inline_view_at(&self, at: Point<Points>) -> Option<usize> {
+        let Some(Hit::Text(p, _)) = self.hit(at) else {
+            return None;
+        };
+        let state = self.session.state();
+        let doc = state.doc();
+        [p.checked_sub(1), Some(p)]
+            .into_iter()
+            .flatten()
+            .find(|&q| {
+                let viewed = doc.node_at(q).is_some_and(|n| {
+                    n.is_inline() && !n.is_text() && self.node_view(n.ty().name()).is_some()
+                });
+                viewed
+                    && self.geo.borrow().range_rects(q, q + 1).iter().any(|b| {
+                        at.x >= b.origin.x
+                            && at.x < b.origin.x + b.size.width
+                            && at.y >= b.origin.y
+                            && at.y < b.origin.y + b.size.height
+                    })
+            })
     }
 
     // Focus and the caret.
